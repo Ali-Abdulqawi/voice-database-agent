@@ -20,12 +20,16 @@ if audio_bytes:
         files = {"data": ("question.wav", audio_bytes, "audio/wav")}
         
         try:
-            # ⚠️ CRITICAL: This must be 'files=files' so it sends as an audio file, not plain text
-            response = requests.post(n8n_webhook_url, files=files)
+            # 1. Create a fake browser disguise
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            
+            # 2. Attach the disguise to the request, and add a timeout limit
+            response = requests.post(n8n_webhook_url, files=files, headers=headers, timeout=30)
             
             if response.status_code == 200:
                 st.success("Answer generated!")
-                # 4. Play the audio response returned by n8n AI
                 st.audio(response.content, format="audio/mpeg")
             else:
                 st.error(f"Error from n8n: {response.status_code}")
