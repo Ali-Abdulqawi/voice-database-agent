@@ -39,23 +39,26 @@ if audio_bytes:
             response = requests.post(n8n_webhook_url, files=files, headers=headers, timeout=30)
             
             if response.status_code == 200:
-                # Unpack the JSON response from n8n
                 response_data = response.json()
                 
-                # Check if our expected data is actually inside the payload
+                # FIX 1: If n8n wrapped the data in a list [ ], grab the dictionary inside
+                if isinstance(response_data, list) and len(response_data) > 0:
+                    response_data = response_data[0]
+                
                 if "text" in response_data and "audio_b64" in response_data:
-                    ai_text = response_data["text"]
-                    ai_audio_bytes = base64.b64decode(response_data["audio_b64"])
-                    
-                    # Show the text AND the audio in the chat bubble
-                    with st.chat_message("assistant"):
-                        st.write(ai_text)
-                        st.audio(ai_audio_bytes, format="audio/mpeg")
+                    # FIX 2: Check to make sure n8n isn't just sending a filesystem note
+                    if response_data["audio_b64"] == "filesystem-v2":
+                        st.error("Audio error: n8n sent a filesystem link instead of the actual audio data. Did you update the Code node?")
+                    else:
+                        ai_text = response_data["text"]
+                        ai_audio_bytes = base64.b64decode(response_data["audio_b64"])
                         
-                    # Save both to memory
-                    st.session_state.messages.append({"role": "assistant", "text": ai_text, "audio": ai_audio_bytes})
+                        with st.chat_message("assistant"):
+                            st.write(ai_text)
+                            st.audio(ai_audio_bytes, format="audio/mpeg")
+                            
+                        st.session_state.messages.append({"role": "assistant", "text": ai_text, "audio": ai_audio_bytes})
                 else:
-                    # If the data is missing, print out EXACTLY what n8n sent us so we can see the problem!
                     st.error(f"n8n replied, but the format was unexpected. Raw data: {response_data}")
                     
             else:
