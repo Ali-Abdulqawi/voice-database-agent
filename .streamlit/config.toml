@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#00E5FF" # Electric Cyan for the microphone and accents
+backgroundColor = "#0E1117" # Deep charcoal background
+secondaryBackgroundColor = "#1E2329" # Slightly lighter dark grey for chat bubbles
+textColor = "#FAFAFA" # Crisp off-white text
+font = "sans serif"
