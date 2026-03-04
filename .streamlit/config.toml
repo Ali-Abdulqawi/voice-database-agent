@@ -1,6 +1,6 @@
 [theme]
-primaryColor = "#6366F1" # Vibrant Indigo for the microphone
-backgroundColor = "#FFFFFF" # Pure white background
-secondaryBackgroundColor = "#F3F4F6" # Very soft light grey for the chat boxes
-textColor = "#111827" # Near-black text for sharp readability
+primaryColor = "#3B82F6" # Bright trusted blue
+backgroundColor = "#0B1120" # Very deep navy/slate background
+secondaryBackgroundColor = "#1E293B" # Lighter slate blue for chat boxes
+textColor = "#F8FAFC" # Soft white text
 font = "sans serif"
