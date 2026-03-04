@@ -5,6 +5,13 @@ import base64
 
 st.set_page_config(page_title="Voice & Text DB Agent", page_icon="📊")
 
+# --- CUSTOM LOGO ---
+# Upload your logo to GitHub first, then reference it here. 
+# A transparent PNG with bright white or cyan text is best for the dark theme.
+st.image("db_agent_logo.png", width=350) # Adjust the width as needed!
+
+st.title("Talk or Type to your Database 🎙️⌨️📊")
+# ... (rest of your code) ...
 st.title("Talk or Type to your Database 🎙️⌨️📊")
 st.write("Click the microphone to speak, or type your question in the chat box below.")
 
