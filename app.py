@@ -11,8 +11,6 @@ st.set_page_config(page_title="Voice & Text DB Agent", page_icon="📊")
 st.image(".streamlit/db_agent_logo.png", width=350) # Adjust the width as needed!
 
 st.title("Talk or Type to your Database 🎙️⌨️📊")
-# ... (rest of your code) ...
-st.title("Talk or Type to your Database 🎙️⌨️📊")
 st.write("Click the microphone to speak, or type your question in the chat box below.")
 
 # 1. Initialize the app's memory
