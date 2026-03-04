@@ -1,6 +1,6 @@
 [theme]
-primaryColor = "#3B82F6" # Bright trusted blue
-backgroundColor = "#0B1120" # Very deep navy/slate background
-secondaryBackgroundColor = "#1E293B" # Lighter slate blue for chat boxes
-textColor = "#F8FAFC" # Soft white text
+primaryColor = "#00E5FF" # Electric Cyan for the microphone and accents
+backgroundColor = "#0E1117" # Deep charcoal background
+secondaryBackgroundColor = "#1E2329" # Slightly lighter dark grey for chat bubbles
+textColor = "#FAFAFA" # Crisp off-white text
 font = "sans serif"
