@@ -13,6 +13,15 @@ st.image(".streamlit/db_agent_logo.png", width=350) # Adjust the width as needed
 st.title("Talk or Type to your Database 🎙️⌨️📊")
 st.write("Click the microphone to speak, or type your question in the chat box below.")
 
+# --- SIDEBAR & SETTINGS ---
+with st.sidebar:
+    st.header("⚙️ Settings")
+    if st.button("🗑️ Clear Chat History"):
+        # This empties the app's memory
+        st.session_state.messages = []
+        # This refreshes the screen immediately
+        st.rerun()
+
 # 1. Initialize the app's memory
 if "messages" not in st.session_state:
     st.session_state.messages = []
