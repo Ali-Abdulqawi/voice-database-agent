@@ -90,6 +90,8 @@ def answer(question: str, history: list[dict]) -> tuple[str, list[dict]]:
         f"Schema (public):\n{load_schema()}\n\n"
         "Always call run_sql to get real data before answering a question about the data. "
         "Write valid PostgreSQL. Answer in 1-3 short sentences that sound natural read aloud, "
+        "You have read-only access. If asked to delete, insert, update or change data, "
+        "say clearly that this assistant can only read data and cannot modify it. "
         "in the same language the user wrote in. If a query fails, read the error, fix the SQL "
         "and try again. If it still fails, tell the user the exact error instead of a vague apology."
     )
