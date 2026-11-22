@@ -1,111 +1,194 @@
+"""Talk or Type to your Database: Streamlit + OpenAI + Supabase (Postgres), no n8n."""
+
+import hashlib
+import json
+import re
+
+import pandas as pd
+import psycopg2
 import streamlit as st
-from audio_recorder_streamlit import audio_recorder
-import requests
-import base64
+from openai import OpenAI
 
-st.set_page_config(page_title="Voice & Text DB Agent", page_icon="📊")
+st.set_page_config(page_title="Talk or Type to your Database", page_icon="🎙️")
 
-# --- CUSTOM LOGO ---
-# Upload your logo to GitHub first, then reference it here. 
-# A transparent PNG with bright white or cyan text is best for the dark theme.
-st.image(".streamlit/db_agent_logo.png", width=350) # Adjust the width as needed!
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+DB_URL = st.secrets["DATABASE_URL"]
+MODEL = st.secrets.get("OPENAI_MODEL", "gpt-4o-mini")
+MAX_ROWS = 200
+MAX_STEPS = 5
+
+
+# ---------- Database ----------
+
+def get_conn():
+    # A fresh connection per query: Supabase's pooler drops idle connections,
+    # so a long-lived cached connection would go stale on Streamlit Cloud.
+    return psycopg2.connect(DB_URL, connect_timeout=10, sslmode="require")
+
+
+@st.cache_data(ttl=600)
+def load_schema() -> str:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT table_name, column_name, data_type
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                ORDER BY table_name, ordinal_position
+                """
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    tables: dict[str, list[str]] = {}
+    for table, column, dtype in rows:
+        tables.setdefault(table, []).append(f"{column} ({dtype})")
+    return "\n".join(f"- {t}: {', '.join(cols)}" for t, cols in tables.items())
+
+
+def run_select(query: str) -> pd.DataFrame:
+    q = query.strip().rstrip(";").strip()
+    # Second line of defence; the first is the read-only database user.
+    if ";" in q or not re.match(r"(?is)^(select|with)\b", q):
+        raise ValueError("Only a single SELECT (or WITH ... SELECT) statement is allowed.")
+    conn = get_conn()
+    try:
+        conn.set_session(readonly=True)
+        with conn.cursor() as cur:
+            cur.execute("SET statement_timeout = '10s'")
+            cur.execute(q)
+            columns = [d.name for d in cur.description]
+            rows = cur.fetchmany(MAX_ROWS)
+        return pd.DataFrame(rows, columns=columns)
+    finally:
+        conn.close()
+
+
+# ---------- AI ----------
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "run_sql",
+            "description": "Run one read-only PostgreSQL SELECT query and return the rows as JSON.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "A single SELECT statement."}},
+                "required": ["query"],
+            },
+        },
+    }
+]
+
+
+def answer(question: str, history: list[dict]) -> tuple[str, list[dict]]:
+    system = (
+        "You are a data assistant for a PostgreSQL database.\n"
+        f"Schema (public):\n{load_schema()}\n\n"
+        "Always call run_sql to get real data before answering a question about the data. "
+        "Write valid PostgreSQL. Answer in 1-3 short sentences that sound natural read aloud, "
+        "in the same language the user wrote in. If a query fails, read the error, fix the SQL "
+        "and try again. If it still fails, tell the user the exact error instead of a vague apology."
+    )
+    messages = [{"role": "system", "content": system}, *history[-10:], {"role": "user", "content": question}]
+    steps: list[dict] = []
+
+    for _ in range(MAX_STEPS):
+        resp = client.chat.completions.create(model=MODEL, messages=messages, tools=TOOLS)
+        msg = resp.choices[0].message
+        if not msg.tool_calls:
+            return msg.content or "", steps
+
+        messages.append(msg.model_dump(exclude_none=True))
+        for call in msg.tool_calls:
+            query = call.function.arguments
+            try:
+                query = json.loads(call.function.arguments)["query"]
+                df = run_select(query)
+                result = df.to_json(orient="records", date_format="iso", default_handler=str)
+                steps.append({"sql": query, "df": df})
+            except Exception as e:  # sent back to the model so it can fix its SQL
+                result = f"ERROR: {e}"
+                steps.append({"sql": query, "error": str(e)})
+            messages.append({"role": "tool", "tool_call_id": call.id, "content": result[:8000]})
+
+    return f"I couldn't finish that in {MAX_STEPS} steps. Try rephrasing the question.", steps
+
+
+def transcribe(audio_file) -> str:
+    return client.audio.transcriptions.create(
+        model="whisper-1", file=("question.wav", audio_file.getvalue())
+    ).text
+
+
+def speak(text: str) -> bytes | None:
+    try:
+        return client.audio.speech.create(model="tts-1", voice="alloy", input=text[:4000]).content
+    except Exception:
+        return None  # the text answer still shows if speech fails
+
+
+# ---------- UI ----------
+
+st.session_state.setdefault("messages", [])
+st.session_state.setdefault("last_audio", None)
+
+with st.sidebar:
+    st.header("⚙️ Settings")
+    if st.button("🗑️ Clear Chat History"):
+        st.session_state.messages = []
+        st.session_state.last_audio = None
+        st.rerun()
 
 st.title("Talk or Type to your Database 🎙️⌨️📊")
 st.write("Click the microphone to speak, or type your question in the chat box below.")
 
-# --- SIDEBAR & SETTINGS ---
-with st.sidebar:
-    st.header("⚙️ Settings")
-    if st.button("🗑️ Clear Chat History"):
-        # This empties the app's memory
-        st.session_state.messages = []
-        # This refreshes the screen immediately
-        st.rerun()
 
-# 1. Initialize the app's memory
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+def render(m: dict) -> None:
+    with st.chat_message(m["role"]):
+        st.write(m["content"])
+        for step in m.get("steps", []):
+            with st.expander("SQL used"):
+                st.code(step["sql"], language="sql")
+                if "error" in step:
+                    st.error(step["error"])
+                else:
+                    st.dataframe(step["df"], use_container_width=True)
+        if m.get("audio"):
+            st.audio(m["audio"], format="audio/mp3")
 
-# 2. Draw all previous messages (Text and Audio) to the screen
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        if "text" in message:
-            st.write(message["text"])
-        if "audio" in message:
-            st.audio(message["audio"], format="audio/wav" if message["role"] == "user" else "audio/mpeg")
 
-# --- HELPER FUNCTION: Handle the response from n8n ---
-def process_n8n_response(response):
-    if response.status_code == 200:
-        response_data = response.json()
-        
-        # If n8n wrapped the data in a list [ ], grab the dictionary inside
-        if isinstance(response_data, list) and len(response_data) > 0:
-            response_data = response_data[0]
-            
-        if "text" in response_data and "audio_b64" in response_data:
-            if response_data["audio_b64"] == "filesystem-v2":
-                st.error("Audio error: n8n sent a filesystem link instead of actual data.")
-            else:
-                ai_text = response_data["text"]
-                ai_audio_bytes = base64.b64decode(response_data["audio_b64"])
-                
-                with st.chat_message("assistant"):
-                    st.write(ai_text)
-                    st.audio(ai_audio_bytes, format="audio/mpeg")
-                    
-                st.session_state.messages.append({"role": "assistant", "text": ai_text, "audio": ai_audio_bytes})
-                st.rerun() # Refresh the page to reset the inputs
-        else:
-            st.error(f"Unexpected format from n8n. Raw data: {response_data}")
-    else:
-        st.error(f"Error from n8n: {response.status_code}")
+for m in st.session_state.messages:
+    render(m)
 
-# --- INPUT WIDGETS ---
-# The dynamic microphone widget
-current_mic_key = f"mic_{len(st.session_state.messages)}"
-audio_bytes = audio_recorder("Record your question:", key=current_mic_key)
+audio = st.audio_input("🎙️ Ask with your voice")
+typed = st.chat_input("Or type your question here...")
 
-# The new text input widget
-text_prompt = st.chat_input("Or type your question here...")
+question = None
+if typed:
+    question = typed
+elif audio is not None:
+    # st.audio_input keeps its value across reruns; only handle a new recording once.
+    digest = hashlib.md5(audio.getvalue()).hexdigest()
+    if digest != st.session_state.last_audio:
+        st.session_state.last_audio = digest
+        with st.spinner("Transcribing..."):
+            question = transcribe(audio)
 
-# Hostinger disguise
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+if question:
+    user_msg = {"role": "user", "content": question}
+    render(user_msg)
+    history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
 
-# --- SCENARIO A: The User Spoke ---
-if audio_bytes:
-    with st.chat_message("user"):
-        st.audio(audio_bytes, format="audio/wav")
-    st.session_state.messages.append({"role": "user", "audio": audio_bytes})
-    
-    with st.spinner("Listening and querying the database..."):
-        # Your original audio webhook
-        n8n_audio_url = "https://n8n.srv862460.hstgr.cloud/webhook/4cf01dae-deb3-4fdf-aec4-78e3c072880e" 
-        files = {"data": ("question.wav", audio_bytes, "audio/wav")}
-        
+    with st.spinner("Querying the database..."):
         try:
-            response = requests.post(n8n_audio_url, files=files, headers=headers, timeout=30)
-            process_n8n_response(response)
+            text, steps = answer(question, history)
         except Exception as e:
-            st.error(f"Failed to connect to n8n: {e}")
+            text, steps = f"Something went wrong: {e}", []
+        bot_msg = {"role": "assistant", "content": text, "steps": steps, "audio": speak(text)}
 
-# --- SCENARIO B: The User Typed ---
-elif text_prompt:
-    with st.chat_message("user"):
-        st.write(text_prompt)
-    st.session_state.messages.append({"role": "user", "text": text_prompt})
-    
-    with st.spinner("Reading and querying the database..."):
-        # ⚠️ PASTE YOUR BRAND NEW TEXT WEBHOOK URL HERE
-        n8n_text_url = "https://n8n.srv862460.hstgr.cloud/webhook/ca0702e5-e555-43a8-83b1-9e7f059e90d9" 
-        
-        # We send the text as a JSON payload, exactly how the AI Agent expects it!
-        payload = {"text": text_prompt}
-        
-        try:
-            response = requests.post(n8n_text_url, json=payload, headers=headers, timeout=30)
-            process_n8n_response(response)
-        except Exception as e:
-            st.error(f"Failed to connect to n8n: {e}")
+    render(bot_msg)
+    st.session_state.messages += [user_msg, bot_msg]
